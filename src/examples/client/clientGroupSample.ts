@@ -1,5 +1,6 @@
 import { Tool } from "../../types.js";
 import { Client } from "../../client/index.js";
+import { ClientGroup } from "../../client/clientGroup.js";
 import { InMemoryTransport } from "../../inMemory.js";
 import { McpServer, ToolCallback } from "../../server/mcp.js";
 import { Transport } from "../../shared/transport.js";
@@ -29,38 +30,23 @@ async function main(): Promise<void> {
   client3.connect(clientTransports[2]);
 
   const allClients = [client1, client2, client3];
-  const toolToClient: { [key: string]: Client } = {};
-  const allTools = [];
-
-  for (const client of allClients) {
-    for (const tool of (await client.listTools()).tools) {
-      if (toolToClient[tool.name]) {
-        console.warn(
-          `Tool name: ${tool.name} is available on multiple servers, picking an arbitrary one`,
-        );
-      }
-      toolToClient[tool.name] = client;
-      allTools.push(tool);
-    }
-  }
+  const clientGroup = await ClientGroup.create(allClients);
 
   const allResources = [];
   allResources.push(...(await client1.listResources()).resources);
   allResources.push(...(await client2.listResources()).resources);
   allResources.push(...(await client3.listResources()).resources);
 
-  const toolName = simulatePromptModel(allTools);
+  const toolName = simulatePromptModel(await clientGroup.listTools());
 
   console.log(`Invoking tool: ${toolName}`);
-  const toolResult = await toolToClient[toolName].callTool({
+  const toolResult = await clientGroup.callTool({
     name: toolName,
   });
 
   console.log(toolResult);
 
-  for (const client of allClients) {
-    await client.close();
-  }
+  clientGroup.close();
 }
 
 // Start the example
