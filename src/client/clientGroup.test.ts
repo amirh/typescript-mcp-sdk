@@ -1,6 +1,11 @@
-import { ClientGroup } from "./clientGroup.js";
+import { ClientGroup, ComponentRenamer } from "./clientGroup.js";
 import { Client } from "./index.js";
-import { Tool, CallToolRequest, CallToolResultSchema, Implementation } from "../types.js";
+import {
+  Tool,
+  CallToolRequest,
+  CallToolResultSchema,
+  Implementation,
+} from "../types.js";
 
 // Mock Client class for testing ClientGroup
 export class MockClient extends Client {
@@ -32,7 +37,6 @@ export class MockClient extends Client {
   override assertRequestHandlerCapability() {}
 }
 
-
 describe("ClientGroup", () => {
   let mockClient1: MockClient;
   let mockClient2: MockClient;
@@ -43,8 +47,18 @@ describe("ClientGroup", () => {
   });
 
   test("should list tools from all clients", async () => {
-    const tool1: Tool = { name: "tool1", description: "description1", parameters: {}, inputSchema: { type: 'object' } };
-    const tool2: Tool = { name: "tool2", description: "description2", parameters: {}, inputSchema: { type: 'object' } };
+    const tool1: Tool = {
+      name: "tool1",
+      description: "description1",
+      parameters: {},
+      inputSchema: { type: "object" },
+    };
+    const tool2: Tool = {
+      name: "tool2",
+      description: "description2",
+      parameters: {},
+      inputSchema: { type: "object" },
+    };
     mockClient1.mockListTools.mockResolvedValueOnce({ tools: [tool1] });
     mockClient2.mockListTools.mockResolvedValueOnce({ tools: [tool2] });
 
@@ -58,8 +72,18 @@ describe("ClientGroup", () => {
   });
 
   test("should call the correct tool on the correct client", async () => {
-    const tool1: Tool = { name: "tool1", description: "description1", parameters: {}, inputSchema: { type: 'object' } };
-    const tool2: Tool = { name: "tool2", description: "description2", parameters: {}, inputSchema: { type: 'object' } };
+    const tool1: Tool = {
+      name: "tool1",
+      description: "description1",
+      parameters: {},
+      inputSchema: { type: "object" },
+    };
+    const tool2: Tool = {
+      name: "tool2",
+      description: "description2",
+      parameters: {},
+      inputSchema: { type: "object" },
+    };
     mockClient1.mockListTools.mockResolvedValueOnce({ tools: [tool1] });
     mockClient2.mockListTools.mockResolvedValueOnce({ tools: [tool2] });
 
@@ -74,7 +98,7 @@ describe("ClientGroup", () => {
     expect(mockClient1.mockCallTool).toHaveBeenCalledWith(
       params,
       CallToolResultSchema,
-      undefined
+      undefined,
     );
     expect(mockClient2.mockCallTool).not.toHaveBeenCalled();
     expect(result).toEqual({ result: "mock result for tool1" });
@@ -91,8 +115,127 @@ describe("ClientGroup", () => {
       parameters: {},
     };
 
-    await expect(clientGroup.callTool(params, CallToolResultSchema)).rejects.toThrow(
-      "Trying to call too nonExistentTool which is not provided by the client group"
+    await expect(
+      clientGroup.callTool(params, CallToolResultSchema),
+    ).rejects.toThrow(
+      "Trying to call too nonExistentTool which is not provided by the client group",
+    );
+  });
+
+  test("should throw error on tool conflict", async () => {
+    const tool1: Tool = {
+      name: "tool",
+      description: "description1",
+      parameters: {},
+      inputSchema: { type: "object" },
+    };
+    const tool2: Tool = {
+      name: "tool",
+      description: "description2",
+      parameters: {},
+      inputSchema: { type: "object" },
+    };
+    mockClient1.mockListTools.mockResolvedValueOnce({ tools: [tool1] });
+    mockClient2.mockListTools.mockResolvedValueOnce({ tools: [tool2] });
+
+    await expect(
+      ClientGroup.create([mockClient1, mockClient2]),
+    ).rejects.toThrow(
+      "Tool name: tool (original: tool) is available on multiple servers",
+    );
+  });
+
+  test("should list renamed tools", async () => {
+    const tool1: Tool = {
+      name: "tool",
+      description: "description1",
+      parameters: {},
+      inputSchema: { type: "object" },
+    };
+    const tool2: Tool = {
+      name: "tool",
+      description: "description2",
+      parameters: {},
+      inputSchema: { type: "object" },
+    };
+    mockClient1.mockListTools.mockResolvedValueOnce({ tools: [tool1] });
+    mockClient2.mockListTools.mockResolvedValueOnce({ tools: [tool2] });
+
+    const renamer: ComponentRenamer = function (
+      clientName: string,
+      componentName: string,
+    ) {
+      return `${clientName}.${componentName}`;
+    };
+
+    const clientGroup = await ClientGroup.create(
+      [mockClient1, mockClient2],
+      renamer,
+    );
+
+    const tools = await clientGroup.listTools();
+
+    expect(tools).toHaveLength(2);
+    const expectedTool1: Tool = {
+      name: "client1.tool",
+      description: "description1",
+      parameters: {},
+      inputSchema: { type: "object" },
+    };
+    const expectedTool2: Tool = {
+      name: "client2.tool",
+      description: "description2",
+      parameters: {},
+      inputSchema: { type: "object" },
+    };
+    expect(tools).toEqual(
+      expect.arrayContaining([expectedTool1, expectedTool2]),
+    );
+  });
+
+  test("should call renamed tool", async () => {
+    const tool1: Tool = {
+      name: "tool",
+      description: "description1",
+      parameters: {},
+      inputSchema: { type: "object" },
+    };
+    const tool2: Tool = {
+      name: "tool",
+      description: "description2",
+      parameters: {},
+      inputSchema: { type: "object" },
+    };
+    mockClient1.mockListTools.mockResolvedValueOnce({ tools: [tool1] });
+    mockClient2.mockListTools.mockResolvedValueOnce({ tools: [tool2] });
+
+    const renamer: ComponentRenamer = function (
+      clientName: string,
+      componentName: string,
+    ) {
+      return `${clientName}.${componentName}`;
+    };
+
+    const clientGroup = await ClientGroup.create(
+      [mockClient1, mockClient2],
+      renamer,
+    );
+
+    const params: CallToolRequest["params"] = {
+      name: "client1.tool",
+      parameters: { arg: "value" },
+    };
+
+    const result = await clientGroup.callTool(params, CallToolResultSchema);
+
+    const expectedCallPArams: CallToolRequest["params"] = {
+      name: "tool",
+      parameters: { arg: "value" },
+    };
+    expect(mockClient1.mockCallTool).toHaveBeenCalledWith(
+      expectedCallPArams,
+      CallToolResultSchema,
+      undefined,
     );
   });
 

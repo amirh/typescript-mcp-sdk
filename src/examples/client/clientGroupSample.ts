@@ -1,6 +1,6 @@
 import { Tool } from "../../types.js";
 import { Client } from "../../client/index.js";
-import { ClientGroup } from "../../client/clientGroup.js";
+import { ClientGroup, ComponentRenamer } from "../../client/clientGroup.js";
 import { InMemoryTransport } from "../../inMemory.js";
 import { McpServer, ToolCallback } from "../../server/mcp.js";
 import { Transport } from "../../shared/transport.js";
@@ -29,8 +29,17 @@ async function main(): Promise<void> {
   });
   client3.connect(clientTransports[2]);
 
+  const renamer: ComponentRenamer = function (
+    clientName: string,
+    componentName: string,
+  ) {
+    if (clientName === "client-3" && componentName === "ping") {
+      return "ping2";
+    }
+    return componentName;
+  };
   const allClients = [client1, client2, client3];
-  const clientGroup = await ClientGroup.create(allClients);
+  const clientGroup = await ClientGroup.create(allClients, renamer);
 
   const allResources = [];
   allResources.push(...(await client1.listResources()).resources);
@@ -40,10 +49,15 @@ async function main(): Promise<void> {
   const toolName = simulatePromptModel(await clientGroup.listTools());
 
   console.log(`Invoking tool: ${toolName}`);
-  const toolResult = await clientGroup.callTool({
+  let toolResult = await clientGroup.callTool({
     name: toolName,
   });
+  console.log(toolResult);
 
+  console.log("Invoking tool: ping2");
+  toolResult = await clientGroup.callTool({
+    name: "ping2",
+  });
   console.log(toolResult);
 
   clientGroup.close();
