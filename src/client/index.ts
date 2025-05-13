@@ -434,4 +434,9 @@ export class Client<
   async sendRootsListChanged() {
     return this.notification({ method: "notifications/roots/list_changed" });
   }
+
+  get name(): string {
+    return this._clientInfo.name;
+  }
 }
+

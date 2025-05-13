@@ -1,6 +1,16 @@
 import { RequestOptions } from "../shared/protocol.js";
-import { Tool, CallToolRequest, CallToolResultSchema, CompatibilityCallToolResultSchema } from "../types.js";
+import {
+  Tool,
+  CallToolRequest,
+  CallToolResultSchema,
+  CompatibilityCallToolResultSchema,
+} from "../types.js";
 import { Client } from "./index.js";
+
+export type ComponentRenamer = (
+  clientName: string,
+  componentName: string,
+) => string;
 
 /**
  * A group of MCP clients.
@@ -23,29 +33,61 @@ import { Client } from "./index.js";
  * // Close all clients
  * await clientGroup.close();
  * ```
+ *
+ * Example with renaming components to fix tool name conflicts:
+ *
+ * ```typescript
+ *
+ * // Define a renaming function
+ * const renamer = (clientName: string, componentName: string) => {
+ *   if (clientName === "client-2" && componentName === "ping") {
+ *     return "ping2";
+ *   }
+ *   return componentName;
+ * };
+ *
+ * // Create a client group with the renamer
+ * // In this case both clients provide a `ping` tool.
+ * const clientGroup = await ClientGroup.create([client1, client2], renamer);
+ *
+ * // List tools (will include "ping" and "ping2")
+ * const tools = await clientGroup.listTools();
+ *
+ * // Call the renamed tool
+ * const result = await clientGroup.callTool({ name: "ping2", params: {} });
+ * ```
  */
 export class ClientGroup {
   private _clients: Client[];
   private _allTools: Tool[];
-  private _toolToClient: { [key: string]: Client; } = {};
+  private _toolToClient: {
+    [key: string]: { client: Client; origToolName: string };
+  } = {};
+  private _componentRename: (
+    componentName: string,
+    clientName: string,
+  ) => string;
 
-  private constructor(
-    clients: Client[]
-  ) {
+  private constructor(clients: Client[], componentRename?: ComponentRenamer) {
     this._clients = clients;
     this._allTools = [];
+    this._componentRename =
+      componentRename ??
+      ((clientName: string, componentName: string) => componentName);
   }
 
   /**
    * Creates a new ClientGroup.
-   * 
+   *
    * @param clients The list of clients to include in the group.
+   * @param componentRename An optional function to rename components (like tools or resources) to avoid name conflicts when combining multiple clients. The function takes the original component name and the client name as arguments and should return the new, unique component name. Defaults to using the original component name.
    */
   static async create(
     clients: Client[],
-    options?: RequestOptions
+    componentRename?: (componentName: string, clientName: string) => string,
+    options?: RequestOptions,
   ): Promise<ClientGroup> {
-    const group = new ClientGroup(clients);
+    const group = new ClientGroup(clients, componentRename);
     await group.update(options);
     return group;
   }
@@ -55,13 +97,17 @@ export class ClientGroup {
     this._toolToClient = {};
     for (const client of this._clients) {
       for (const tool of (await client.listTools(options)).tools) {
+        const origName = tool.name;
+        tool.name = this._componentRename(client.name, tool.name);
         if (this._toolToClient[tool.name]) {
-          // TODO(amirh): we should allow the users to configure tool renames.
-          console.warn(
-            `Tool name: ${tool.name} is available on multiple servers, picking an arbitrary one`
-          );
+          throw new Error(`
+            Tool name: ${tool.name} (original: ${origName}) is available on multiple servers
+            `);
         }
-        this._toolToClient[tool.name] = client;
+        this._toolToClient[tool.name] = {
+          client: client,
+          origToolName: origName,
+        };
         this._allTools.push(tool);
       }
     }
@@ -88,16 +134,23 @@ export class ClientGroup {
    */
   async callTool(
     params: CallToolRequest["params"],
-    resultSchema: typeof CallToolResultSchema |
-      typeof CompatibilityCallToolResultSchema = CallToolResultSchema,
-    options?: RequestOptions
+    resultSchema:
+      | typeof CallToolResultSchema
+      | typeof CompatibilityCallToolResultSchema = CallToolResultSchema,
+    options?: RequestOptions,
   ) {
     if (!this._toolToClient[params.name]) {
       throw new Error(
-        `Trying to call too ${params.name} which is not provided by the client group`
+        `Trying to call too ${params.name} which is not provided by the client group`,
       );
     }
-    return this._toolToClient[params.name].callTool(params, resultSchema, options);
+    const actualParams = structuredClone(params);
+    actualParams.name = this._toolToClient[params.name].origToolName;
+    return this._toolToClient[params.name].client.callTool(
+      actualParams,
+      resultSchema,
+      options,
+    );
   }
 
   /**
